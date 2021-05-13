@@ -124,7 +124,7 @@ myproc(void) {
 int
 allocpid() {
   int pid;
-  
+
   acquire(&pid_lock);
   pid = nextpid;
   nextpid = nextpid + 1;
@@ -256,7 +256,7 @@ userinit(void)
 
   p = allocproc();
   initproc = p;
-  
+
   // allocate one user page and copy init's instructions
   // and data into it.
   uvminit(p->pagetable, initcode, sizeof(initcode));
@@ -270,6 +270,14 @@ userinit(void)
   p->cmd = strdup("init");
   p->cwd = namei("/");
   p->state = RUNNABLE;
+
+  // ------------------
+  acquire(&prio_lock);
+
+  insert_into_prio_queue(p);
+
+  release(&prio_lock);
+  // ------------------
 
   release(&p->lock);
 }
@@ -311,6 +319,15 @@ fork(void)
   // Copy user memory from parent to child.
   if(uvmcopy(p->pagetable, np->pagetable, p->sz) < 0){
     freeproc(np);
+
+    // ------------------
+    acquire(&prio_lock);
+
+    remove_from_prio_queue(np);
+
+    release(&prio_lock);
+    // ------------------
+
     release(&np->lock);
     return -1;
   }
@@ -335,6 +352,14 @@ fork(void)
   pid = np->pid;
 
   np->state = RUNNABLE;
+
+  // ------------------
+  acquire(&prio_lock);
+
+  insert_into_prio_queue(np);
+
+  release(&prio_lock);
+  // ------------------
 
   release(&np->lock);
 
@@ -410,7 +435,7 @@ exit(int status)
   acquire(&p->lock);
   struct proc *original_parent = p->parent;
   release(&p->lock);
-  
+
   // we need the parent's lock in order to wake it up from wait().
   // the parent-then-child rule says we have to lock it first.
   acquire(&original_parent->lock);
@@ -425,6 +450,14 @@ exit(int status)
 
   p->xstate = status;
   p->state = ZOMBIE;
+
+  // ------------------
+  acquire(&prio_lock);
+
+  remove_from_prio_queue(p);
+
+  release(&prio_lock);
+  // ------------------
 
   release(&original_parent->lock);
 
@@ -481,7 +514,7 @@ wait(uint64 addr)
       release(&p->lock);
       return -1;
     }
-    
+
     // Wait for a child to exit.
     sleep(p, &p->lock);  //DOC: wait-sleep
   }
@@ -499,7 +532,7 @@ scheduler(void)
 {
   struct proc *p;
   struct cpu *c = mycpu();
-  
+
   c->proc = 0;
   for(;;){
     // Avoid deadlock by giving devices a chance to interrupt.
@@ -605,7 +638,7 @@ void
 sleep(void *chan, struct spinlock *lk)
 {
   struct proc *p = myproc();
-  
+
   // Must acquire p->lock in order to
   // change p->state and then call sched.
   // Once we hold p->lock, we can be
