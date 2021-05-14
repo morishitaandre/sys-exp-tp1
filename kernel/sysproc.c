@@ -73,10 +73,45 @@ sys_sleep(void)
   return 0;
 }
 
+
+
 uint64
-sys_nice(void){
-  return 0;
+sys_nice(void)
+{
+
+/////// Activity 3.2
+
+  int pid; // process identifier
+  int n;   // new priority
+  
+  argint(1, &n);
+  
+  if(argint(0, &pid) < 0){
+    return -1;
+    
+  }else if( n<0 || n>NPRIO ){
+    return -1;
+  
+  }else{
+
+  return nice(pid,n);
+  }
+  
+///////
+  
+  //return 0;
 }
+
+
+
+
+
+
+
+
+
+
+
 
 uint64
 sys_kill(void)
