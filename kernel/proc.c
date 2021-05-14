@@ -523,7 +523,7 @@ wait(uint64 addr)
 
 // --------------------------------------------
 
-struct proc* pick_highest_priority_runnable_proc() {
+struct proc* pick_highest_priority_runnable_proc(struct cpu *c) {
   struct list_proc **ptr_prio;
   struct list_proc *selected_proc;
 
@@ -540,6 +540,10 @@ struct proc* pick_highest_priority_runnable_proc() {
           // RUNNABLE process found. Return pointer to process with both the prio_lock and process lock
           return selected_proc->p;
         }
+        // ensure that release() doesn't enable interrupts.
+        // again to avoid a race between interrupt and WFI.
+        c->intena = 0;
+
         release(&selected_proc->p->lock);
         selected_proc = selected_proc->next;
       }
@@ -552,6 +556,40 @@ struct proc* pick_highest_priority_runnable_proc() {
 }
 
 // --------------------------------------------
+
+// Needs lock on p and prio_lock[p->priority]
+void move_to_last_of_prio_queue(struct proc* p){
+  struct list_proc* new_last = prio[p->priority];
+  struct list_proc* prev = 0;
+  struct list_proc* head = new_last;
+
+
+  struct list_proc* last = head;
+  while(last && last->next){
+    last = last->next;
+  }
+
+
+  while(new_last && new_last->next){
+    if(new_last->p == p) {
+      // Process found
+      if(new_last == head){
+        head = new_last->next;
+      } else {
+        prev->next = new_last->next;
+      }
+
+      new_last->next = 0;
+      last->next = new_last;
+
+      break;
+    }
+    prev = new_last;
+    new_last = new_last->next;
+  }
+
+  prio[p->priority] = head;
+}
 
 
 // Per-CPU process scheduler.
@@ -578,29 +616,64 @@ scheduler(void)
     intr_off();
 
     int found = 0;
-    for(p = proc; p < &proc[NPROC]; p++) {
-      acquire(&p->lock);
-      if(p->state == RUNNABLE) {
-        // Switch to chosen process.  It is the process's job
-        // to release its lock and then reacquire it
-        // before jumping back to us.
-        p->state = RUNNING;
-        c->proc = p;
-        swtch(&c->scheduler, &p->context);
 
-        // Process is done running for now.
-        // It should have changed its p->state before coming back.
-        c->proc = 0;
 
-        found = 1;
-      }
+    // for(p = proc; p < &proc[NPROC]; p++) {
+    //   acquire(&p->lock);
+    //   if(p->state == RUNNABLE) {
+    //     // Switch to chosen process.  It is the process's job
+    //     // to release its lock and then reacquire it
+    //     // before jumping back to us.
+    //     p->state = RUNNING;
+    //     c->proc = p;
+    //     swtch(&c->scheduler, &p->context);
+    //
+    //     // Process is done running for now.
+    //     // It should have changed its p->state before coming back.
+    //     c->proc = 0;
+    //
+    //     found = 1;
+    //   }
+    //
+    //   // ensure that release() doesn't enable interrupts.
+    //   // again to avoid a race between interrupt and WFI.
+    //   c->intena = 0;
+    //
+    //   release(&p->lock);
+    // }
+
+
+    // ------------------------------------------------
+
+    p = pick_highest_priority_runnable_proc(c);
+    while (p) {
+      p->state = RUNNING;
+      c->proc = p;
+
+      // Since pick_highest_priority_runnable_proc() ensures that we have both the p->lock and prio_lock
+      // we can call move_to_last_of_prio_queue()
+      move_to_last_of_prio_queue(p);
+
+      // Release prio_lock in order to use swtch
+      release(&prio_lock);
+      swtch(&c->scheduler, &p->context);
+
+      // Process is done running for now.
+      // It should have changed its p->state before coming back.
+      c->proc = 0;
+      found = 1;
 
       // ensure that release() doesn't enable interrupts.
       // again to avoid a race between interrupt and WFI.
       c->intena = 0;
 
       release(&p->lock);
+
+      p = pick_highest_priority_runnable_proc(c);
     }
+
+    // ------------------------------------------------
+
     if(found == 0){
       asm volatile("wfi");
     }
