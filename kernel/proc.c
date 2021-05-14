@@ -902,3 +902,18 @@ void priodump(void){
     printf("\n");
   }
 }
+
+
+
+//// Activity 3.1
+
+
+int nice(int pid, int priority){
+  return -1;
+}
+
+
+////
+
+
+
