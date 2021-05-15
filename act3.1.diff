@@ -1,0 +1,23 @@
+diff --git a/kernel/proc.c b/kernel/proc.c
+index 90032fb..620c9d1 100644
+--- a/kernel/proc.c
++++ b/kernel/proc.c
+@@ -902,3 +902,18 @@ void priodump(void){
+     printf("\n");
+   }
+ }
++
++
++
++//// Activity 3.1
++
++
++int nice(int pid, int priority){
++  return -1;
++}
++
++
++////
++
++
++

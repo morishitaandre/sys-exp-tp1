@@ -1,0 +1,44 @@
+diff --git a/kernel/proc.c b/kernel/proc.c
+index 620c9d1..94d4905 100644
+--- a/kernel/proc.c
++++ b/kernel/proc.c
+@@ -905,14 +905,34 @@ void priodump(void){
+ 
+ 
+ 
+-//// Activity 3.1
++//// Activity 3.3
++int
++nice( int pid, int priority){
+ 
++  struct proc* p;
+ 
+-int nice(int pid, int priority){
+-  return -1;
++  // go over the process table to find the process
++  //that has the correct PID, update with new priority
++  //then change the priority line of the process.
++  
++  for(p = proc; p < &proc[NPROC]; p++) {
++    acquire(&p->lock);
++    if(p->pid == pid){
++      acquire(&prio_lock);
++      
++      remove_from_prio_queue(p) ;
++      p->priority = priority ;
++      insert_into_prio_queue(p) ;
++    
++      release(&prio_lock);
++      release(&p->lock);
++      return 0;
++    }
++    release(&p->lock);
++    
++  }
++  return -1; 
+ }
+-
+-
+ ////
+ 
+ 
