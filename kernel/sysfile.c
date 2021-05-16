@@ -390,7 +390,7 @@ sys_chdir(void)
   char path[MAXPATH];
   struct inode *ip;
   struct proc *p = myproc();
-  
+
   begin_op(ROOTDEV);
   if(argstr(0, path, MAXPATH) < 0 || (ip = namei(path)) == 0){
     end_op(ROOTDEV);
@@ -486,7 +486,44 @@ sys_pipe(void)
 uint64
 sys_create_mutex(void)
 {
-  return -1;
+  char path[MAXPATH];
+  int fd, omode;
+  struct file *f;
+  struct inode *ip;
+  int n;
+
+  if((n = argstr(0, path, MAXPATH)) < 0 || argint(1, &omode) < 0)
+    return -1;
+
+  begin_op(ROOTDEV);
+
+
+  ip = create(path, T_FILE, 0, 0);
+  if(ip == 0){
+    end_op(ROOTDEV);
+    return -1;
+  }
+
+
+  if((f = filealloc()) == 0 || (fd = fdalloc(f)) < 0){
+    if(f)
+      fileclose(f);
+    iunlockput(ip);
+    end_op(ROOTDEV);
+    return -1;
+  }
+
+  f->type = FD_MUTEX;
+  initsleeplock(&f->mutex, "mutex");
+  f->ip = ip;
+  f->off = 0;
+  f->readable = !(omode & O_WRONLY);
+  f->writable = (omode & O_WRONLY) || (omode & O_RDWR);
+
+  iunlock(ip);
+  end_op(ROOTDEV);
+
+  return fd;
 }
 
 uint64
