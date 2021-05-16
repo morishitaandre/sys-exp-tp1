@@ -1,0 +1,599 @@
+diff --git a/act4.4.diff b/act4.4.diff
+new file mode 100644
+index 0000000..deff3d7
+--- /dev/null
++++ b/act4.4.diff
+@@ -0,0 +1,555 @@
++diff --git a/act1.2.diff b/act1.2.diff
++new file mode 100644
++index 0000000..05c6bfd
++--- /dev/null
+++++ b/act1.2.diff
++@@ -0,0 +1,119 @@
+++diff --git a/kernel/proc.c b/kernel/proc.c
+++index 4ff19c0..d1a5727 100644
+++--- a/kernel/proc.c
++++++ b/kernel/proc.c
+++@@ -124,7 +124,7 @@ myproc(void) {
+++ int
+++ allocpid() {
+++   int pid;
+++-  
++++
+++   acquire(&pid_lock);
+++   pid = nextpid;
+++   nextpid = nextpid + 1;
+++@@ -256,7 +256,7 @@ userinit(void)
+++ 
+++   p = allocproc();
+++   initproc = p;
+++-  
++++
+++   // allocate one user page and copy init's instructions
+++   // and data into it.
+++   uvminit(p->pagetable, initcode, sizeof(initcode));
+++@@ -271,6 +271,14 @@ userinit(void)
+++   p->cwd = namei("/");
+++   p->state = RUNNABLE;
+++ 
++++  // ------------------
++++  acquire(&prio_lock);
++++
++++  insert_into_prio_queue(p);
++++
++++  release(&prio_lock);
++++  // ------------------
++++
+++   release(&p->lock);
+++ }
+++ 
+++@@ -311,6 +319,15 @@ fork(void)
+++   // Copy user memory from parent to child.
+++   if(uvmcopy(p->pagetable, np->pagetable, p->sz) < 0){
+++     freeproc(np);
++++
++++    // ------------------
++++    acquire(&prio_lock);
++++
++++    remove_from_prio_queue(np);
++++
++++    release(&prio_lock);
++++    // ------------------
++++
+++     release(&np->lock);
+++     return -1;
+++   }
+++@@ -336,6 +353,14 @@ fork(void)
+++ 
+++   np->state = RUNNABLE;
+++ 
++++  // ------------------
++++  acquire(&prio_lock);
++++
++++  insert_into_prio_queue(np);
++++
++++  release(&prio_lock);
++++  // ------------------
++++
+++   release(&np->lock);
+++ 
+++   return pid;
+++@@ -410,7 +435,7 @@ exit(int status)
+++   acquire(&p->lock);
+++   struct proc *original_parent = p->parent;
+++   release(&p->lock);
+++-  
++++
+++   // we need the parent's lock in order to wake it up from wait().
+++   // the parent-then-child rule says we have to lock it first.
+++   acquire(&original_parent->lock);
+++@@ -426,6 +451,14 @@ exit(int status)
+++   p->xstate = status;
+++   p->state = ZOMBIE;
+++ 
++++  // ------------------
++++  acquire(&prio_lock);
++++
++++  remove_from_prio_queue(p);
++++
++++  release(&prio_lock);
++++  // ------------------
++++
+++   release(&original_parent->lock);
+++ 
+++   // Jump into the scheduler, never to return.
+++@@ -481,7 +514,7 @@ wait(uint64 addr)
+++       release(&p->lock);
+++       return -1;
+++     }
+++-    
++++
+++     // Wait for a child to exit.
+++     sleep(p, &p->lock);  //DOC: wait-sleep
+++   }
+++@@ -499,7 +532,7 @@ scheduler(void)
+++ {
+++   struct proc *p;
+++   struct cpu *c = mycpu();
+++-  
++++
+++   c->proc = 0;
+++   for(;;){
+++     // Avoid deadlock by giving devices a chance to interrupt.
+++@@ -605,7 +638,7 @@ void
+++ sleep(void *chan, struct spinlock *lk)
+++ {
+++   struct proc *p = myproc();
+++-  
++++
+++   // Must acquire p->lock in order to
+++   // change p->state and then call sched.
+++   // Once we hold p->lock, we can be
++diff --git a/act2.2.diff b/act2.2.diff
++new file mode 100644
++index 0000000..fc2a867
++--- /dev/null
+++++ b/act2.2.diff
++@@ -0,0 +1,197 @@
+++diff --git a/act2.1.diff b/act2.1.diff
+++new file mode 100644
+++index 0000000..c080269
+++--- /dev/null
++++++ b/act2.1.diff
+++@@ -0,0 +1,45 @@
++++diff --git a/kernel/proc.c b/kernel/proc.c
++++index d1a5727..ae2f124 100644
++++--- a/kernel/proc.c
+++++++ b/kernel/proc.c
++++@@ -520,6 +520,40 @@ wait(uint64 addr)
++++   }
++++ }
++++ 
+++++
+++++// --------------------------------------------
+++++
+++++struct proc* pick_highest_priority_runnable_proc() {
+++++  struct list_proc **ptr_prio;
+++++  struct list_proc *selected_proc;
+++++
+++++  acquire(&prio_lock);
+++++  // Goes through each pointer of each priority list
+++++  for (ptr_prio = prio; ptr_prio < &prio[NPRIO]; ptr_prio++) {
+++++    // Checks if pointer to priority list is not NULL
+++++    if (*ptr_prio) {
+++++      // If pointer is not NULL, search for each a RUNNABLE process in that list
+++++      selected_proc = *ptr_prio;
+++++      while (selected_proc) {
+++++        acquire(&selected_proc->p->lock);
+++++        if (selected_proc->p->state == RUNNABLE) {
+++++          // RUNNABLE process found. Return pointer to process with both the prio_lock and process lock
+++++          return selected_proc->p;
+++++        }
+++++        release(&selected_proc->p->lock);
+++++        selected_proc = selected_proc->next;
+++++      }
+++++      // If this priority list does not have RUNNABLE processes, go to next priority list
+++++    }
+++++  }
+++++  // All priority lists do not have any RUNNABLE processes
+++++  release(&prio_lock);
+++++  return 0;
+++++}
+++++
+++++// --------------------------------------------
+++++
+++++
++++ // Per-CPU process scheduler.
++++ // Each CPU calls scheduler() after setting itself up.
++++ // Scheduler never returns.  It loops, doing:
+++diff --git a/kernel/proc.c b/kernel/proc.c
+++index ae2f124..90032fb 100644
+++--- a/kernel/proc.c
++++++ b/kernel/proc.c
+++@@ -523,7 +523,7 @@ wait(uint64 addr)
+++ 
+++ // --------------------------------------------
+++ 
+++-struct proc* pick_highest_priority_runnable_proc() {
++++struct proc* pick_highest_priority_runnable_proc(struct cpu *c) {
+++   struct list_proc **ptr_prio;
+++   struct list_proc *selected_proc;
+++ 
+++@@ -540,6 +540,10 @@ struct proc* pick_highest_priority_runnable_proc() {
+++           // RUNNABLE process found. Return pointer to process with both the prio_lock and process lock
+++           return selected_proc->p;
+++         }
++++        // ensure that release() doesn't enable interrupts.
++++        // again to avoid a race between interrupt and WFI.
++++        c->intena = 0;
++++
+++         release(&selected_proc->p->lock);
+++         selected_proc = selected_proc->next;
+++       }
+++@@ -553,6 +557,40 @@ struct proc* pick_highest_priority_runnable_proc() {
+++ 
+++ // --------------------------------------------
+++ 
++++// Needs lock on p and prio_lock[p->priority]
++++void move_to_last_of_prio_queue(struct proc* p){
++++  struct list_proc* new_last = prio[p->priority];
++++  struct list_proc* prev = 0;
++++  struct list_proc* head = new_last;
++++
++++
++++  struct list_proc* last = head;
++++  while(last && last->next){
++++    last = last->next;
++++  }
++++
++++
++++  while(new_last && new_last->next){
++++    if(new_last->p == p) {
++++      // Process found
++++      if(new_last == head){
++++        head = new_last->next;
++++      } else {
++++        prev->next = new_last->next;
++++      }
++++
++++      new_last->next = 0;
++++      last->next = new_last;
++++
++++      break;
++++    }
++++    prev = new_last;
++++    new_last = new_last->next;
++++  }
++++
++++  prio[p->priority] = head;
++++}
++++
+++ 
+++ // Per-CPU process scheduler.
+++ // Each CPU calls scheduler() after setting itself up.
+++@@ -578,29 +616,64 @@ scheduler(void)
+++     intr_off();
+++ 
+++     int found = 0;
+++-    for(p = proc; p < &proc[NPROC]; p++) {
+++-      acquire(&p->lock);
+++-      if(p->state == RUNNABLE) {
+++-        // Switch to chosen process.  It is the process's job
+++-        // to release its lock and then reacquire it
+++-        // before jumping back to us.
+++-        p->state = RUNNING;
+++-        c->proc = p;
+++-        swtch(&c->scheduler, &p->context);
+++-
+++-        // Process is done running for now.
+++-        // It should have changed its p->state before coming back.
+++-        c->proc = 0;
+++-
+++-        found = 1;
+++-      }
++++
++++
++++    // for(p = proc; p < &proc[NPROC]; p++) {
++++    //   acquire(&p->lock);
++++    //   if(p->state == RUNNABLE) {
++++    //     // Switch to chosen process.  It is the process's job
++++    //     // to release its lock and then reacquire it
++++    //     // before jumping back to us.
++++    //     p->state = RUNNING;
++++    //     c->proc = p;
++++    //     swtch(&c->scheduler, &p->context);
++++    //
++++    //     // Process is done running for now.
++++    //     // It should have changed its p->state before coming back.
++++    //     c->proc = 0;
++++    //
++++    //     found = 1;
++++    //   }
++++    //
++++    //   // ensure that release() doesn't enable interrupts.
++++    //   // again to avoid a race between interrupt and WFI.
++++    //   c->intena = 0;
++++    //
++++    //   release(&p->lock);
++++    // }
++++
++++
++++    // ------------------------------------------------
++++
++++    p = pick_highest_priority_runnable_proc(c);
++++    while (p) {
++++      p->state = RUNNING;
++++      c->proc = p;
++++
++++      // Since pick_highest_priority_runnable_proc() ensures that we have both the p->lock and prio_lock
++++      // we can call move_to_last_of_prio_queue()
++++      move_to_last_of_prio_queue(p);
++++
++++      // Release prio_lock in order to use swtch
++++      release(&prio_lock);
++++      swtch(&c->scheduler, &p->context);
++++
++++      // Process is done running for now.
++++      // It should have changed its p->state before coming back.
++++      c->proc = 0;
++++      found = 1;
+++ 
+++       // ensure that release() doesn't enable interrupts.
+++       // again to avoid a race between interrupt and WFI.
+++       c->intena = 0;
+++ 
+++       release(&p->lock);
++++
++++      p = pick_highest_priority_runnable_proc(c);
+++     }
++++
++++    // ------------------------------------------------
++++
+++     if(found == 0){
+++       asm volatile("wfi");
+++     }
++diff --git a/act3.1.diff b/act3.1.diff
++new file mode 100644
++index 0000000..71e7871
++--- /dev/null
+++++ b/act3.1.diff
++@@ -0,0 +1,23 @@
+++diff --git a/kernel/proc.c b/kernel/proc.c
+++index 90032fb..620c9d1 100644
+++--- a/kernel/proc.c
++++++ b/kernel/proc.c
+++@@ -902,3 +902,18 @@ void priodump(void){
+++     printf("\n");
+++   }
+++ }
++++
++++
++++
++++//// Activity 3.1
++++
++++
++++int nice(int pid, int priority){
++++  return -1;
++++}
++++
++++
++++////
++++
++++
++++
++diff --git a/act3.2.diff b/act3.2.diff
++new file mode 100644
++index 0000000..951a188
++--- /dev/null
+++++ b/act3.2.diff
++@@ -0,0 +1,53 @@
+++diff --git a/kernel/sysproc.c b/kernel/sysproc.c
+++index e4e45c8..d558973 100644
+++--- a/kernel/sysproc.c
++++++ b/kernel/sysproc.c
+++@@ -73,11 +73,46 @@ sys_sleep(void)
+++   return 0;
+++ }
+++ 
++++
++++
+++ uint64
+++-sys_nice(void){
+++-  return 0;
++++sys_nice(void)
++++{
++++
++++/////// Activity 3.2
++++
++++  int pid; // process identifier
++++  int n;   // new priority
++++  
++++  argint(1, &n);
++++  
++++  if(argint(0, &pid) < 0){
++++    return -1;
++++    
++++  }else if( n<0 || n>NPRIO ){
++++    return -1;
++++  
++++  }else{
++++
++++  return nice(pid,n);
++++  }
++++  
++++///////
++++  
++++  //return 0;
+++ }
+++ 
++++
++++
++++
++++
++++
++++
++++
++++
++++
++++
++++
+++ uint64
+++ sys_kill(void)
+++ {
++diff --git a/act3.3.diff b/act3.3.diff
++new file mode 100644
++index 0000000..cbcf1f2
++--- /dev/null
+++++ b/act3.3.diff
++@@ -0,0 +1,44 @@
+++diff --git a/kernel/proc.c b/kernel/proc.c
+++index 620c9d1..94d4905 100644
+++--- a/kernel/proc.c
++++++ b/kernel/proc.c
+++@@ -905,14 +905,34 @@ void priodump(void){
+++ 
+++ 
+++ 
+++-//// Activity 3.1
++++//// Activity 3.3
++++int
++++nice( int pid, int priority){
+++ 
++++  struct proc* p;
+++ 
+++-int nice(int pid, int priority){
+++-  return -1;
++++  // go over the process table to find the process
++++  //that has the correct PID, update with new priority
++++  //then change the priority line of the process.
++++  
++++  for(p = proc; p < &proc[NPROC]; p++) {
++++    acquire(&p->lock);
++++    if(p->pid == pid){
++++      acquire(&prio_lock);
++++      
++++      remove_from_prio_queue(p) ;
++++      p->priority = priority ;
++++      insert_into_prio_queue(p) ;
++++    
++++      release(&prio_lock);
++++      release(&p->lock);
++++      return 0;
++++    }
++++    release(&p->lock);
++++    
++++  }
++++  return -1; 
+++ }
+++-
+++-
+++ ////
+++ 
+++ 
++diff --git a/act4.3.diff b/act4.3.diff
++new file mode 100644
++index 0000000..eba21e2
++--- /dev/null
+++++ b/act4.3.diff
++@@ -0,0 +1,24 @@
+++diff --git a/kernel/file.h b/kernel/file.h
+++index aa6d208..cddfe7e 100644
+++--- a/kernel/file.h
++++++ b/kernel/file.h
+++@@ -2,7 +2,7 @@
+++ #define FILE_H
+++ 
+++ struct file {
+++-  enum { FD_NONE, FD_PIPE, FD_INODE, FD_DEVICE } type;
++++  enum { FD_NONE, FD_PIPE, FD_INODE, FD_DEVICE, FD_MUTEX} type;
+++   int ref; // reference count
+++   char readable;
+++   char writable;
+++@@ -11,6 +11,10 @@ struct file {
+++   uint off;          // FD_INODE and FD_DEVICE
+++   short major;       // FD_DEVICE
+++   short minor;       // FD_DEVICE
++++
++++  // ---------------------
++++  struct sleeplock mutex;
++++  // ---------------------
+++ };
+++ 
+++ #define major(dev)  ((dev) >> 16 & 0xFFFF)
++diff --git a/kernel/sysfile.c b/kernel/sysfile.c
++index a1975ed..acc3cc3 100644
++--- a/kernel/sysfile.c
+++++ b/kernel/sysfile.c
++@@ -390,7 +390,7 @@ sys_chdir(void)
++   char path[MAXPATH];
++   struct inode *ip;
++   struct proc *p = myproc();
++-  
+++
++   begin_op(ROOTDEV);
++   if(argstr(0, path, MAXPATH) < 0 || (ip = namei(path)) == 0){
++     end_op(ROOTDEV);
++@@ -486,7 +486,44 @@ sys_pipe(void)
++ uint64
++ sys_create_mutex(void)
++ {
++-  return -1;
+++  char path[MAXPATH];
+++  int fd, omode;
+++  struct file *f;
+++  struct inode *ip;
+++  int n;
+++
+++  if((n = argstr(0, path, MAXPATH)) < 0 || argint(1, &omode) < 0)
+++    return -1;
+++
+++  begin_op(ROOTDEV);
+++
+++
+++  ip = create(path, T_FILE, 0, 0);
+++  if(ip == 0){
+++    end_op(ROOTDEV);
+++    return -1;
+++  }
+++
+++
+++  if((f = filealloc()) == 0 || (fd = fdalloc(f)) < 0){
+++    if(f)
+++      fileclose(f);
+++    iunlockput(ip);
+++    end_op(ROOTDEV);
+++    return -1;
+++  }
+++
+++  f->type = FD_MUTEX;
+++  initsleeplock(&f->mutex, "mutex");
+++  f->ip = ip;
+++  f->off = 0;
+++  f->readable = !(omode & O_WRONLY);
+++  f->writable = (omode & O_WRONLY) || (omode & O_RDWR);
+++
+++  iunlock(ip);
+++  end_op(ROOTDEV);
+++
+++  return fd;
++ }
++ 
++ uint64
+diff --git a/kernel/sysfile.c b/kernel/sysfile.c
+index acc3cc3..31b28ca 100644
+--- a/kernel/sysfile.c
++++ b/kernel/sysfile.c
+@@ -529,12 +529,33 @@ sys_create_mutex(void)
+ uint64
+ sys_acquire_mutex(void)
+ {
++  struct file *f;
++  int n;
++  uint64 p;
++
++  if(argfd(0, 0, &f) < 0 || argint(2, &n) < 0 || argaddr(1, &p) < 0)
++    return -1;
++
++  if (f->type != FD_MUTEX)
++    return -1;
++
++  acquiresleep(&f->mutex);
+   return 0;
+ }
+ 
+ uint64
+ sys_release_mutex(void)
+ {
++  struct file *f;
++  int n;
++  uint64 p;
++
++  if(argfd(0, 0, &f) < 0 || argint(2, &n) < 0 || argaddr(1, &p) < 0)
++    return -1;
++
++  if (f->type != FD_MUTEX)
++    return -1;
+ 
++  releasesleep(&f->mutex);
+   return 0;
+ }
